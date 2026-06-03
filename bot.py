@@ -1,9 +1,10 @@
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import os
 import time
 import json
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -56,9 +57,21 @@ def seconds_to_hours(seconds: int) -> float:
     return seconds / 3600
 
 
+@tasks.loop(hours=1)
+async def cleanup_old_messages():
+    channel = bot.get_channel(CHANNEL_ID)
+    if channel is None:
+        return
+    cutoff = datetime.now(timezone.utc).timestamp() - 86400
+    async for message in channel.history(limit=200):
+        if message.author == bot.user and message.created_at.timestamp() < cutoff:
+            await message.delete()
+
+
 @bot.event
 async def on_ready():
     await bot.tree.sync()
+    cleanup_old_messages.start()
     print(f"Logged in as {bot.user} — slash commands synced.")
 
 
