@@ -1,0 +1,4 @@
+.env
+boss_timers.json
+__pycache__/
+*.pyc
