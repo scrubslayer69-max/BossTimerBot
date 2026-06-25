@@ -108,6 +108,12 @@ def build_view() -> discord.ui.View:
         style=discord.ButtonStyle.danger,
     )
     view.add_item(maint_button)
+    undo_button = discord.ui.Button(
+        label="Undo",
+        custom_id="undo",
+        style=discord.ButtonStyle.secondary,
+    )
+    view.add_item(undo_button)
     return view
 
 
@@ -124,11 +130,14 @@ class NoteModal(discord.ui.Modal, title="Boss Kill Report"):
         self.boss = boss
 
     async def on_submit(self, interaction: discord.Interaction):
+        current = boss_state.get(self.boss)
         entry = {
             "tod": time.time(),
             "killed_by": interaction.user.display_name,
             "maintenance": False,
         }
+        if current:
+            entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
         if self.note.value:
             entry["note"] = self.note.value
         boss_state[self.boss] = entry
@@ -151,14 +160,50 @@ class MaintenanceConfirm(discord.ui.Modal, title="Confirm Maintenance"):
             return
         now = time.time()
         for boss in boss_timers:
-            boss_state[boss] = {
+            current = boss_state.get(boss)
+            entry = {
                 "tod": now,
                 "killed_by": "Maintenance",
                 "maintenance": True,
             }
+            if current:
+                entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
+            boss_state[boss] = entry
         save_state(boss_state)
         await interaction.response.send_message("✅ Maintenance — all bosses set to READY!", ephemeral=True)
         await update_timer_message()
+
+
+async def handle_undo(interaction: discord.Interaction):
+    options = []
+    for boss, state in boss_state.items():
+        if state.get("previous"):
+            options.append(discord.SelectOption(
+                label=boss.capitalize(),
+                value=boss,
+            ))
+    if not options:
+        await interaction.response.send_message("❌ Nothing to undo.", ephemeral=True)
+        return
+    view = discord.ui.View(timeout=60)
+    select = discord.ui.Select(
+        placeholder="Select a boss to undo...",
+        options=options,
+        custom_id="undo_select",
+    )
+    view.add_item(select)
+    await interaction.response.send_message("Select which boss to revert:", view=view, ephemeral=True)
+
+
+async def handle_undo_select(interaction: discord.Interaction, boss: str):
+    state = boss_state.get(boss)
+    if not state or not state.get("previous"):
+        await interaction.response.send_message("❌ Nothing to undo for that boss.", ephemeral=True)
+        return
+    boss_state[boss] = state["previous"]
+    save_state(boss_state)
+    await interaction.response.send_message(f"↩️ Reverted **{boss.capitalize()}** to previous state.", ephemeral=True)
+    await update_timer_message()
 
 
 async def handle_kill(interaction: discord.Interaction, boss: str):
@@ -203,6 +248,12 @@ async def on_interaction(interaction: discord.Interaction):
     custom_id = interaction.data.get("custom_id", "")
     if custom_id == "maintenance":
         await interaction.response.send_modal(MaintenanceConfirm())
+    elif custom_id == "undo":
+        await handle_undo(interaction)
+    elif custom_id == "undo_select":
+        selected = interaction.data.get("values", [])
+        if selected:
+            await handle_undo_select(interaction, selected[0])
     elif custom_id.startswith("kill_"):
         boss = custom_id.removeprefix("kill_")
         if boss in boss_timers:
