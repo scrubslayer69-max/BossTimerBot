@@ -74,10 +74,10 @@ def build_timer_text() -> str:
         if state and state.get("tod"):
             tod = state["tod"]
             spawn_time = int(tod + duration)
-            if now < spawn_time:
-                lines.append(f"🔴 spawns <t:{spawn_time}:R> (<t:{spawn_time}:t>)")
-            else:
+            if state.get("maintenance") or now >= spawn_time:
                 lines.append("🟢 **READY!**")
+            else:
+                lines.append(f"🔴 spawns <t:{spawn_time}:R> (<t:{spawn_time}:t>)")
             lines.append(f"Last known ToD: <t:{int(tod)}:f>")
             killed_by = state.get("killed_by", "Unknown")
             note = state.get("note")
@@ -102,6 +102,12 @@ def build_view() -> discord.ui.View:
             style=discord.ButtonStyle.primary,
         )
         view.add_item(button)
+    maint_button = discord.ui.Button(
+        label="Maintenance",
+        custom_id="maintenance",
+        style=discord.ButtonStyle.danger,
+    )
+    view.add_item(maint_button)
     return view
 
 
@@ -121,12 +127,37 @@ class NoteModal(discord.ui.Modal, title="Boss Kill Report"):
         entry = {
             "tod": time.time(),
             "killed_by": interaction.user.display_name,
+            "maintenance": False,
         }
         if self.note.value:
             entry["note"] = self.note.value
         boss_state[self.boss] = entry
         save_state(boss_state)
         await interaction.response.send_message("✅ Updated!", ephemeral=True)
+        await update_timer_message()
+
+
+class MaintenanceConfirm(discord.ui.Modal, title="Confirm Maintenance"):
+    confirm = discord.ui.TextInput(
+        label='Type "confirm" to reset all bosses',
+        placeholder="confirm",
+        required=True,
+        max_length=10,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self.confirm.value.strip().lower() != "confirm":
+            await interaction.response.send_message("❌ Cancelled — type `confirm` to proceed.", ephemeral=True)
+            return
+        now = time.time()
+        for boss in boss_timers:
+            boss_state[boss] = {
+                "tod": now,
+                "killed_by": "Maintenance",
+                "maintenance": True,
+            }
+        save_state(boss_state)
+        await interaction.response.send_message("✅ Maintenance — all bosses set to READY!", ephemeral=True)
         await update_timer_message()
 
 
@@ -170,7 +201,9 @@ async def on_interaction(interaction: discord.Interaction):
     if interaction.type != discord.InteractionType.component:
         return
     custom_id = interaction.data.get("custom_id", "")
-    if custom_id.startswith("kill_"):
+    if custom_id == "maintenance":
+        await interaction.response.send_modal(MaintenanceConfirm())
+    elif custom_id.startswith("kill_"):
         boss = custom_id.removeprefix("kill_")
         if boss in boss_timers:
             await handle_kill(interaction, boss)
