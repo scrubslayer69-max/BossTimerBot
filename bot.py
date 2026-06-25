@@ -19,7 +19,10 @@ DEFAULT_TIMERS = {
     "rangora":  8  * 3600,
     "vyrava":   6  * 3600,
     "nazar":    2  * 3600,
+    "twt":      48 * 3600,
 }
+
+MAINTENANCE_IMMUNE = {"twt"}
 
 
 def load_timers() -> dict:
@@ -160,6 +163,8 @@ class MaintenanceConfirm(discord.ui.Modal, title="Confirm Maintenance"):
             return
         now = time.time()
         for boss in boss_timers:
+            if boss in MAINTENANCE_IMMUNE:
+                continue
             current = boss_state.get(boss)
             entry = {
                 "tod": now,
