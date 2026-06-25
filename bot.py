@@ -4,7 +4,6 @@ from discord.ext import commands, tasks
 import os
 import time
 import json
-from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,6 +11,7 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 TIMERS_FILE = "boss_timers.json"
+STATE_FILE = "boss_state.json"
 
 DEFAULT_TIMERS = {
     "hanure":   12 * 3600,
@@ -34,19 +34,26 @@ def save_timers(timers: dict):
         json.dump(timers, f, indent=2)
 
 
+def load_state() -> dict:
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+
+def save_state(state: dict):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+
+
 boss_timers = load_timers()
+boss_state = load_state()
 
 intents = discord.Intents.default()
 intents.message_content = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-
-def find_boss(content: str) -> str | None:
-    lower = content.strip().lower()
-    if lower in boss_timers:
-        return lower
-    return None
+timer_message: discord.Message | None = None
 
 
 def hours_to_seconds(hours: float) -> int:
@@ -57,40 +64,116 @@ def seconds_to_hours(seconds: int) -> float:
     return seconds / 3600
 
 
-@tasks.loop(hours=1)
-async def cleanup_old_messages():
-    channel = bot.get_channel(CHANNEL_ID)
-    if channel is None:
-        return
-    cutoff = datetime.now(timezone.utc).timestamp() - 86400
-    async for message in channel.history(limit=200):
-        if message.author == bot.user and message.created_at.timestamp() < cutoff:
-            await message.delete()
+def build_timer_text() -> str:
+    now = time.time()
+    lines = ["⚔️ **World Boss Timers**\n"]
+    for boss, duration in boss_timers.items():
+        name = boss.capitalize()
+        lines.append(f"--- **{name}** ---")
+        state = boss_state.get(boss)
+        if state and state.get("tod"):
+            tod = state["tod"]
+            spawn_time = int(tod + duration)
+            if now < spawn_time:
+                lines.append(f"🔴 spawns <t:{spawn_time}:R> (<t:{spawn_time}:t>)")
+            else:
+                lines.append("🟢 **READY!**")
+            lines.append(f"Last known ToD: <t:{int(tod)}:f>")
+            killed_by = state.get("killed_by", "Unknown")
+            note = state.get("note")
+            if note:
+                lines.append(f"Last: **{killed_by}** | 💬 {note}")
+            else:
+                lines.append(f"Last: **{killed_by}**")
+        else:
+            lines.append("🟢 **READY!**")
+            lines.append("Last known ToD: N/A")
+            lines.append("Last: N/A")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def build_view() -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    for boss in boss_timers:
+        button = discord.ui.Button(
+            label=f"Kill: {boss.capitalize()}",
+            custom_id=f"kill_{boss}",
+            style=discord.ButtonStyle.primary,
+        )
+        view.add_item(button)
+    return view
+
+
+class NoteModal(discord.ui.Modal, title="Boss Kill Report"):
+    note = discord.ui.TextInput(
+        label="Note (optional)",
+        placeholder="e.g. pug raid, didn't see death...",
+        required=False,
+        max_length=100,
+    )
+
+    def __init__(self, boss: str):
+        super().__init__()
+        self.boss = boss
+
+    async def on_submit(self, interaction: discord.Interaction):
+        entry = {
+            "tod": time.time(),
+            "killed_by": interaction.user.display_name,
+        }
+        if self.note.value:
+            entry["note"] = self.note.value
+        boss_state[self.boss] = entry
+        save_state(boss_state)
+        await interaction.response.send_message("✅ Updated!", ephemeral=True)
+        await update_timer_message()
+
+
+async def handle_kill(interaction: discord.Interaction, boss: str):
+    await interaction.response.send_modal(NoteModal(boss))
+
+
+async def update_timer_message():
+    if timer_message:
+        await timer_message.edit(content=build_timer_text(), view=build_view())
+
+
+@tasks.loop(minutes=1)
+async def refresh_timer():
+    await update_timer_message()
 
 
 @bot.event
 async def on_ready():
+    global timer_message
     await bot.tree.sync()
-    cleanup_old_messages.start()
+
+    channel = bot.get_channel(CHANNEL_ID)
+
+    async for msg in channel.history(limit=50):
+        if msg.author == bot.user and "World Boss Timers" in msg.content:
+            timer_message = msg
+            break
+
+    if timer_message:
+        await timer_message.edit(content=build_timer_text(), view=build_view())
+    else:
+        timer_message = await channel.send(content=build_timer_text(), view=build_view())
+
+    refresh_timer.start()
     print(f"Logged in as {bot.user} — slash commands synced.")
 
 
 @bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot:
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.type != discord.InteractionType.component:
         return
-    if message.channel.id != CHANNEL_ID:
-        return
-
-    boss = find_boss(message.content)
-    if boss is None:
-        return
-
-    spawn_unix = int(time.time()) + boss_timers[boss]
-    await message.delete()
-    await message.channel.send(
-        f"**{boss.capitalize()}** spawns <t:{spawn_unix}:R>"
-    )
+    custom_id = interaction.data.get("custom_id", "")
+    if custom_id.startswith("kill_"):
+        boss = custom_id.removeprefix("kill_")
+        if boss in boss_timers:
+            await handle_kill(interaction, boss)
 
 
 @bot.tree.command(name="addtimer", description="Add a new boss with a respawn timer.")
@@ -107,6 +190,7 @@ async def addtimer(interaction: discord.Interaction, boss: str, hours: float):
     await interaction.response.send_message(
         f"Added **{key.capitalize()}** with a {hours}h respawn timer.", ephemeral=True
     )
+    await update_timer_message()
 
 
 @bot.tree.command(name="edittimer", description="Edit the respawn timer for an existing boss.")
@@ -124,6 +208,7 @@ async def edittimer(interaction: discord.Interaction, boss: str, hours: float):
     await interaction.response.send_message(
         f"Updated **{key.capitalize()}**: {old}h → {hours}h", ephemeral=True
     )
+    await update_timer_message()
 
 
 @bot.tree.command(name="removetimer", description="Remove a boss from the timer list.")
@@ -135,9 +220,12 @@ async def removetimer(interaction: discord.Interaction, boss: str):
         return
     del boss_timers[key]
     save_timers(boss_timers)
+    boss_state.pop(key, None)
+    save_state(boss_state)
     await interaction.response.send_message(
         f"Removed **{key.capitalize()}** from the timer list.", ephemeral=True
     )
+    await update_timer_message()
 
 
 @bot.tree.command(name="listtimers", description="List all bosses and their respawn timers.")
