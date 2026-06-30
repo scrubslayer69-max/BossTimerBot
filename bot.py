@@ -415,14 +415,17 @@ async def on_ready():
     # Egg boss channel
     if EGG_CHANNEL_ID:
         egg_channel = bot.get_channel(EGG_CHANNEL_ID)
-        async for msg in egg_channel.history(limit=50):
-            if msg.author == bot.user and "Egg Boss Timers" in msg.content:
-                egg_message = msg
-                break
-        if egg_message:
-            await egg_message.edit(content=build_egg_text(), view=build_egg_view())
+        if egg_channel is None:
+            print(f"WARNING: Egg channel {EGG_CHANNEL_ID} not found — check bot has access to the channel.")
         else:
-            egg_message = await egg_channel.send(content=build_egg_text(), view=build_egg_view())
+            async for msg in egg_channel.history(limit=50):
+                if msg.author == bot.user and "Egg Boss Timers" in msg.content:
+                    egg_message = msg
+                    break
+            if egg_message:
+                await egg_message.edit(content=build_egg_text(), view=build_egg_view())
+            else:
+                egg_message = await egg_channel.send(content=build_egg_text(), view=build_egg_view())
 
     refresh_timer.start()
     print(f"Logged in as {bot.user} — slash commands synced.")
