@@ -46,6 +46,9 @@ EGG_SIMPLE_TIMERS = {
     "twt":      48 * 3600,
     "morpheus": 8  * 3600,
 }
+EGG_SIMPLE_BUTTON_LABELS = {
+    "morpheus": "Killed",
+}
 
 # ── Persistence helpers ──────────────────────────────────────────────────────
 
@@ -233,8 +236,10 @@ def build_egg_view() -> discord.ui.View:
             style=discord.ButtonStyle.primary,
         ))
     for boss in EGG_SIMPLE_TIMERS:
+        verb = EGG_SIMPLE_BUTTON_LABELS.get(boss, "Summoned")
+        label = f"{verb}: {boss.upper() if boss == 'twt' else boss.capitalize()}"
         view.add_item(discord.ui.Button(
-            label=f"Summoned: {boss.upper()}",
+            label=label,
             custom_id=f"eggsimple_{boss}",
             style=discord.ButtonStyle.primary,
         ))
