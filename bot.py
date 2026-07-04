@@ -33,17 +33,16 @@ MAINTENANCE_IMMUNE = {"twt"}
 
 # ── Egg boss config ──────────────────────────────────────────────────────────
 
-EGG_BOSSES = ["red dragon", "kraken", "berserker"]
-EGG_BOSS_ICONS = {
-    "red dragon": "🔴",
-    "kraken":     "🔵",
-    "berserker":  "🟢",
-}
-EGG_SIMPLE_TIMERS = {"twt": 48 * 3600}
 EGG_COOLDOWN_SECS = 2 * 3600
-EGG_GROW_SECS = 53 * 3600
-EGG_WINDOW_SECS = 1 * 3600
-EGG_CYCLE_SECS = EGG_COOLDOWN_SECS + EGG_GROW_SECS + EGG_WINDOW_SECS  # 56h total
+EGG_WINDOW_SECS   = 1 * 3600
+
+EGG_BOSS_CONFIG = {
+    "red dragon": {"icon": "🔴", "grow": 51  * 3600},
+    "kraken":     {"icon": "🔵", "grow": 51  * 3600},
+    "berserker":  {"icon": "🟢", "grow": (5 * 24 + 22) * 3600},  # 142h
+}
+EGG_BOSSES = list(EGG_BOSS_CONFIG.keys())
+EGG_SIMPLE_TIMERS = {"twt": 48 * 3600}
 
 # ── Persistence helpers ──────────────────────────────────────────────────────
 
@@ -96,19 +95,20 @@ def hours_to_seconds(hours: float) -> int:
 def seconds_to_hours(seconds: int) -> float:
     return seconds / 3600
 
-def get_egg_status(summon_time: float) -> tuple[str, int, int, int]:
+def get_egg_status(summon_time: float, grow_secs: int) -> tuple[str, int, int, int]:
     """Returns (status, cooldown_end, grow_end, window_end) for a given summon time."""
     now = time.time()
+    cycle_secs = EGG_COOLDOWN_SECS + grow_secs + EGG_WINDOW_SECS
     elapsed = now - summon_time
-    cycle_num = int(elapsed // EGG_CYCLE_SECS)
-    cycle_start = summon_time + cycle_num * EGG_CYCLE_SECS
+    cycle_num = int(elapsed // cycle_secs)
+    cycle_start = summon_time + cycle_num * cycle_secs
     cooldown_end = int(cycle_start + EGG_COOLDOWN_SECS)
-    grow_end = int(cycle_start + EGG_COOLDOWN_SECS + EGG_GROW_SECS)
-    window_end = int(cycle_start + EGG_CYCLE_SECS)
+    grow_end     = int(cycle_start + EGG_COOLDOWN_SECS + grow_secs)
+    window_end   = int(cycle_start + cycle_secs)
     pos = now - cycle_start
     if pos < EGG_COOLDOWN_SECS:
         status = "cooldown"
-    elif pos < EGG_COOLDOWN_SECS + EGG_GROW_SECS:
+    elif pos < EGG_COOLDOWN_SECS + grow_secs:
         status = "growing"
     else:
         status = "ready"
@@ -172,12 +172,13 @@ async def update_timer_message():
 
 def build_egg_text() -> str:
     lines = ["🥚 **Egg Boss Timers**\n"]
-    for boss in EGG_BOSSES:
-        icon = EGG_BOSS_ICONS.get(boss, "🥚")
+    for boss, cfg in EGG_BOSS_CONFIG.items():
+        icon = cfg["icon"]
+        grow_secs = cfg["grow"]
         lines.append(f"--- {icon} **{boss.title()}** ---")
         state = egg_state.get(boss)
         if state and state.get("summon_time"):
-            status, cooldown_end, grow_end, window_end = get_egg_status(state["summon_time"])
+            status, cooldown_end, grow_end, window_end = get_egg_status(state["summon_time"], grow_secs)
             if status == "cooldown":
                 lines.append(f"⏳ **Cooldown** — grows <t:{cooldown_end}:R> (<t:{cooldown_end}:t>)")
             elif status == "growing":
@@ -538,15 +539,17 @@ async def settimer(
     seconds: int = 0,
 ):
     total_seconds = hours * 3600 + minutes * 60 + seconds
+    grow_secs = EGG_BOSS_CONFIG[boss]["grow"]
     if total_seconds <= 0:
         await interaction.response.send_message("❌ Please provide a time greater than zero.", ephemeral=True)
         return
-    if total_seconds > EGG_GROW_SECS:
-        await interaction.response.send_message("❌ Time remaining cannot exceed 53 hours.", ephemeral=True)
+    if total_seconds > grow_secs:
+        max_h = grow_secs // 3600
+        await interaction.response.send_message(f"❌ Time remaining cannot exceed {max_h} hours for {boss.title()}.", ephemeral=True)
         return
 
     # Back-calculate so the egg appears mid-grow with the correct time remaining
-    summon_time = time.time() - (EGG_COOLDOWN_SECS + EGG_GROW_SECS - total_seconds)
+    summon_time = time.time() - (EGG_COOLDOWN_SECS + grow_secs - total_seconds)
     current = egg_state.get(boss)
     entry = {
         "summon_time": summon_time,
