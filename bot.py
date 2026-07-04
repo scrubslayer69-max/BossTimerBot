@@ -13,9 +13,10 @@ CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 EGG_CHANNEL_ID_RAW = os.getenv("EGG_CHANNEL_ID")
 EGG_CHANNEL_ID = int(EGG_CHANNEL_ID_RAW) if EGG_CHANNEL_ID_RAW else None
 
-TIMERS_FILE = "boss_timers.json"
-STATE_FILE = "boss_state.json"
-EGG_STATE_FILE = "egg_state.json"
+DATA_DIR = os.getenv("DATA_DIR", ".")
+TIMERS_FILE = os.path.join(DATA_DIR, "boss_timers.json")
+STATE_FILE = os.path.join(DATA_DIR, "boss_state.json")
+EGG_STATE_FILE = os.path.join(DATA_DIR, "egg_state.json")
 
 # ── World boss config ────────────────────────────────────────────────────────
 
