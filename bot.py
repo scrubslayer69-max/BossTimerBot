@@ -42,7 +42,10 @@ EGG_BOSS_CONFIG = {
     "berserker":  {"icon": "🟢", "grow": (5 * 24 + 22) * 3600},  # 142h
 }
 EGG_BOSSES = list(EGG_BOSS_CONFIG.keys())
-EGG_SIMPLE_TIMERS = {"twt": 48 * 3600}
+EGG_SIMPLE_TIMERS = {
+    "twt":      48 * 3600,
+    "morpheus": 8  * 3600,
+}
 
 # ── Persistence helpers ──────────────────────────────────────────────────────
 
