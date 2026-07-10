@@ -37,8 +37,8 @@ EGG_COOLDOWN_SECS = 2 * 3600
 EGG_WINDOW_SECS   = 1 * 3600
 
 EGG_BOSS_CONFIG = {
-    "red dragon": {"icon": "🔴", "grow": 51  * 3600},
-    "kraken":     {"icon": "🔵", "grow": 51  * 3600},
+    "red dragon": {"icon": "🔴", "grow": 53  * 3600},
+    "kraken":     {"icon": "🔵", "grow": 53  * 3600},
     "berserker":  {"icon": "🟢", "grow": (5 * 24 + 22) * 3600},  # 142h
 }
 EGG_BOSSES = list(EGG_BOSS_CONFIG.keys())
@@ -530,7 +530,8 @@ async def listtimers(interaction: discord.Interaction):
 @bot.tree.command(name="settimer", description="Manually set how long is left on an egg's grow timer.")
 @app_commands.describe(
     boss="Which egg boss",
-    hours="Hours remaining (0–53)",
+    days="Days remaining",
+    hours="Hours remaining (0–23)",
     minutes="Minutes remaining (0–59)",
     seconds="Seconds remaining (0–59)",
 )
@@ -542,11 +543,12 @@ async def listtimers(interaction: discord.Interaction):
 async def settimer(
     interaction: discord.Interaction,
     boss: str,
+    days: int = 0,
     hours: int = 0,
     minutes: int = 0,
     seconds: int = 0,
 ):
-    total_seconds = hours * 3600 + minutes * 60 + seconds
+    total_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds
     grow_secs = EGG_BOSS_CONFIG[boss]["grow"]
     if total_seconds <= 0:
         await interaction.response.send_message("❌ Please provide a time greater than zero.", ephemeral=True)
@@ -569,6 +571,7 @@ async def settimer(
     save_egg_state(egg_state)
 
     parts = []
+    if days:    parts.append(f"{days}d")
     if hours:   parts.append(f"{hours}h")
     if minutes: parts.append(f"{minutes}m")
     if seconds: parts.append(f"{seconds}s")
