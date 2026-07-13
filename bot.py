@@ -517,18 +517,32 @@ async def addtimer(interaction: discord.Interaction, boss: str, hours: float):
     await update_timer_message()
 
 
-@bot.tree.command(name="edittimer", description="Edit the respawn timer for an existing world boss.")
+@bot.tree.command(name="edittimer", description="Edit the respawn timer for an existing boss.")
 @app_commands.describe(boss="Boss name", hours="New respawn time in hours (decimals OK, e.g. 1.5)")
 async def edittimer(interaction: discord.Interaction, boss: str, hours: float):
     key = boss.lower()
-    if key not in boss_timers:
-        await interaction.response.send_message(f"`{key}` not found. Use `/addtimer` to add it.", ephemeral=True)
+    updated = []
+
+    if key in boss_timers:
+        old = seconds_to_hours(boss_timers[key])
+        boss_timers[key] = hours_to_seconds(hours)
+        save_timers(boss_timers)
+        updated.append(f"World bosses: {old}h → {hours}h")
+        await update_timer_message()
+
+    if key in EGG_SIMPLE_TIMERS:
+        old = seconds_to_hours(EGG_SIMPLE_TIMERS[key])
+        EGG_SIMPLE_TIMERS[key] = hours_to_seconds(hours)
+        updated.append(f"Egg channel: {old}h → {hours}h")
+        await update_egg_message()
+
+    if not updated:
+        await interaction.response.send_message(f"`{key}` not found.", ephemeral=True)
         return
-    old = seconds_to_hours(boss_timers[key])
-    boss_timers[key] = hours_to_seconds(hours)
-    save_timers(boss_timers)
-    await interaction.response.send_message(f"Updated **{key.capitalize()}**: {old}h → {hours}h", ephemeral=True)
-    await update_timer_message()
+
+    await interaction.response.send_message(
+        f"Updated **{key.capitalize()}**:\n" + "\n".join(updated), ephemeral=True
+    )
 
 
 @bot.tree.command(name="removetimer", description="Remove a world boss from the timer list.")
