@@ -285,6 +285,34 @@ class NoteModal(discord.ui.Modal, title="Boss Kill Report"):
         await update_timer_message()
 
 
+class SimpleKillModal(discord.ui.Modal, title="Boss Kill Report"):
+    note = discord.ui.TextInput(
+        label="Note (optional)",
+        placeholder="e.g. guild run...",
+        required=False,
+        max_length=100,
+    )
+
+    def __init__(self, key: str):
+        super().__init__()
+        self.key = key
+
+    async def on_submit(self, interaction: discord.Interaction):
+        current = egg_state.get(self.key)
+        entry = {
+            "kill_time": time.time(),
+            "killed_by": interaction.user.display_name,
+        }
+        if current:
+            entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
+        if self.note.value:
+            entry["note"] = self.note.value
+        egg_state[self.key] = entry
+        save_egg_state(egg_state)
+        await interaction.response.send_message("✅ Updated!", ephemeral=True)
+        await update_egg_message()
+
+
 class EggKillModal(discord.ui.Modal, title="Egg Pop Report"):
     note = discord.ui.TextInput(
         label="Note (optional)",
@@ -464,7 +492,7 @@ async def on_interaction(interaction: discord.Interaction):
     elif custom_id.startswith("eggsimple_"):
         boss = custom_id.removeprefix("eggsimple_")
         if boss in EGG_SIMPLE_TIMERS:
-            await interaction.response.send_modal(EggKillModal(f"simple_{boss}"))
+            await interaction.response.send_modal(SimpleKillModal(f"simple_{boss}"))
     elif custom_id.startswith("eggkill_"):
         boss = custom_id.removeprefix("eggkill_")
         if boss in EGG_BOSSES:
