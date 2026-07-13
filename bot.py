@@ -581,6 +581,8 @@ async def listtimers(interaction: discord.Interaction):
     app_commands.Choice(name="Red Dragon", value="red dragon"),
     app_commands.Choice(name="Kraken",     value="kraken"),
     app_commands.Choice(name="Berserker",  value="berserker"),
+    app_commands.Choice(name="TWT",        value="twt"),
+    app_commands.Choice(name="Morpheus",   value="morpheus"),
 ])
 async def settimer(
     interaction: discord.Interaction,
@@ -591,36 +593,47 @@ async def settimer(
     seconds: int = 0,
 ):
     total_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds
-    grow_secs = EGG_BOSS_CONFIG[boss]["grow"]
     if total_seconds <= 0:
         await interaction.response.send_message("❌ Please provide a time greater than zero.", ephemeral=True)
         return
-    if total_seconds > grow_secs:
-        max_h = grow_secs // 3600
-        await interaction.response.send_message(f"❌ Time remaining cannot exceed {max_h} hours for {boss.title()}.", ephemeral=True)
-        return
-
-    # Back-calculate so the egg appears mid-grow with the correct time remaining
-    summon_time = time.time() - (EGG_COOLDOWN_SECS + grow_secs - total_seconds)
-    current = egg_state.get(boss)
-    entry = {
-        "summon_time": summon_time,
-        "popped_by": interaction.user.display_name,
-    }
-    if current:
-        entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
-    egg_state[boss] = entry
-    save_egg_state(egg_state)
 
     parts = []
     if days:    parts.append(f"{days}d")
     if hours:   parts.append(f"{hours}h")
     if minutes: parts.append(f"{minutes}m")
     if seconds: parts.append(f"{seconds}s")
-    await interaction.response.send_message(
-        f"✅ **{boss.title()}** egg timer set — ready in **{' '.join(parts)}**.", ephemeral=True
-    )
-    await update_egg_message()
+    time_str = " ".join(parts)
+
+    if boss in EGG_SIMPLE_TIMERS:
+        duration = EGG_SIMPLE_TIMERS[boss]
+        if total_seconds > duration:
+            await interaction.response.send_message(f"❌ Time remaining cannot exceed {seconds_to_hours(duration)}h for {boss.upper() if boss == 'twt' else boss.capitalize()}.", ephemeral=True)
+            return
+        key = f"simple_{boss}"
+        kill_time = time.time() - (duration - total_seconds)
+        current = egg_state.get(key)
+        entry = {"kill_time": kill_time, "killed_by": interaction.user.display_name}
+        if current:
+            entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
+        egg_state[key] = entry
+        save_egg_state(egg_state)
+        await interaction.response.send_message(f"✅ **{boss.upper() if boss == 'twt' else boss.capitalize()}** timer set — spawns in **{time_str}**.", ephemeral=True)
+        await update_egg_message()
+    else:
+        grow_secs = EGG_BOSS_CONFIG[boss]["grow"]
+        if total_seconds > grow_secs:
+            max_h = grow_secs // 3600
+            await interaction.response.send_message(f"❌ Time remaining cannot exceed {max_h}h for {boss.title()}.", ephemeral=True)
+            return
+        summon_time = time.time() - (EGG_COOLDOWN_SECS + grow_secs - total_seconds)
+        current = egg_state.get(boss)
+        entry = {"summon_time": summon_time, "popped_by": interaction.user.display_name}
+        if current:
+            entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
+        egg_state[boss] = entry
+        save_egg_state(egg_state)
+        await interaction.response.send_message(f"✅ **{boss.title()}** egg timer set — ready in **{time_str}**.", ephemeral=True)
+        await update_egg_message()
 
 
 bot.run(TOKEN)
