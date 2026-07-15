@@ -427,10 +427,21 @@ async def handle_egg_undo_select(interaction: discord.Interaction, boss: str):
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
 
-@tasks.loop(minutes=1)
+@tasks.loop(seconds=30)
 async def refresh_timer():
-    await update_timer_message()
-    await update_egg_message()
+    try:
+        await update_timer_message()
+    except Exception as e:
+        print(f"Error updating timer message: {e}")
+    try:
+        await update_egg_message()
+    except Exception as e:
+        print(f"Error updating egg message: {e}")
+
+
+@refresh_timer.before_loop
+async def before_refresh():
+    await bot.wait_until_ready()
 
 # ── Bot events ────────────────────────────────────────────────────────────────
 
