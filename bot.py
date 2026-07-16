@@ -623,7 +623,7 @@ async def settimer(
         key = f"simple_{boss}"
         kill_time = time.time() - (duration - total_seconds)
         current = egg_state.get(key)
-        entry = {"kill_time": kill_time, "killed_by": interaction.user.display_name}
+        entry = {"kill_time": kill_time, "killed_by": current.get("killed_by", "Unknown") if current else "Unknown"}
         if current:
             entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
         egg_state[key] = entry
@@ -638,7 +638,7 @@ async def settimer(
             return
         summon_time = time.time() - (EGG_COOLDOWN_SECS + grow_secs - total_seconds)
         current = egg_state.get(boss)
-        entry = {"summon_time": summon_time, "popped_by": interaction.user.display_name}
+        entry = {"summon_time": summon_time, "popped_by": current.get("popped_by", "Unknown") if current else "Unknown"}
         if current:
             entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
         egg_state[boss] = entry
