@@ -14,8 +14,8 @@ EGG_CHANNEL_ID_RAW = os.getenv("EGG_CHANNEL_ID")
 EGG_CHANNEL_ID = int(EGG_CHANNEL_ID_RAW) if EGG_CHANNEL_ID_RAW else None
 
 DATA_DIR = os.getenv("DATA_DIR", ".")
-TIMERS_FILE = os.path.join(DATA_DIR, "boss_timers.json")
-STATE_FILE = os.path.join(DATA_DIR, "boss_state.json")
+TIMERS_FILE    = os.path.join(DATA_DIR, "boss_timers.json")
+STATE_FILE     = os.path.join(DATA_DIR, "boss_state.json")
 EGG_STATE_FILE = os.path.join(DATA_DIR, "egg_state.json")
 
 # ── World boss config ────────────────────────────────────────────────────────
@@ -28,29 +28,21 @@ DEFAULT_TIMERS = {
     "nazar":    2  * 3600,
     "twt":      48 * 3600,
 }
-
 MAINTENANCE_IMMUNE = {"twt"}
 
-# ── Egg boss config ──────────────────────────────────────────────────────────
+# ── Secondary channel config ─────────────────────────────────────────────────
 
-EGG_COOLDOWN_SECS = 2 * 3600
-EGG_WINDOW_SECS   = 1 * 3600
-
-EGG_BOSS_CONFIG = {
-    "red dragon": {"icon": "🔴", "grow": 53  * 3600},
-    "kraken":     {"icon": "🔵", "grow": 53  * 3600},
-    "berserker":  {"icon": "🟢", "grow": (5 * 24 + 22) * 3600},  # 142h
-}
-EGG_BOSSES = list(EGG_BOSS_CONFIG.keys())
 EGG_SIMPLE_TIMERS = {
     "twt":      48 * 3600,
     "morpheus": 8  * 3600,
+    "vyrava":   6  * 3600,
 }
 EGG_SIMPLE_BUTTON_LABELS = {
     "morpheus": "Killed",
+    "vyrava":   "Killed",
 }
 
-# ── Persistence helpers ──────────────────────────────────────────────────────
+# ── Persistence ───────────────────────────────────────────────────────────────
 
 def load_timers() -> dict:
     if os.path.exists(TIMERS_FILE):
@@ -83,17 +75,17 @@ def save_egg_state(state: dict):
         json.dump(state, f, indent=2)
 
 boss_timers = load_timers()
-boss_state = load_state()
-egg_state = load_egg_state()
+boss_state  = load_state()
+egg_state   = load_egg_state()
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 timer_message: discord.Message | None = None
-egg_message: discord.Message | None = None
+egg_message:   discord.Message | None = None
 
-# ── Utility ──────────────────────────────────────────────────────────────────
+# ── Utility ───────────────────────────────────────────────────────────────────
 
 def hours_to_seconds(hours: float) -> int:
     return int(hours * 3600)
@@ -101,33 +93,16 @@ def hours_to_seconds(hours: float) -> int:
 def seconds_to_hours(seconds: int) -> float:
     return seconds / 3600
 
-def get_egg_status(summon_time: float, grow_secs: int) -> tuple[str, int, int, int]:
-    """Returns (status, cooldown_end, grow_end, window_end) for a given summon time."""
-    now = time.time()
-    cycle_secs = EGG_COOLDOWN_SECS + grow_secs + EGG_WINDOW_SECS
-    elapsed = now - summon_time
-    cycle_num = int(elapsed // cycle_secs)
-    cycle_start = summon_time + cycle_num * cycle_secs
-    cooldown_end = int(cycle_start + EGG_COOLDOWN_SECS)
-    grow_end     = int(cycle_start + EGG_COOLDOWN_SECS + grow_secs)
-    window_end   = int(cycle_start + cycle_secs)
-    pos = now - cycle_start
-    if pos < EGG_COOLDOWN_SECS:
-        status = "cooldown"
-    elif pos < EGG_COOLDOWN_SECS + grow_secs:
-        status = "growing"
-    else:
-        status = "ready"
-    return status, cooldown_end, grow_end, window_end
+def boss_label(boss: str) -> str:
+    return boss.upper() if boss == "twt" else boss.capitalize()
 
-# ── World boss message ───────────────────────────────────────────────────────
+# ── World boss message ────────────────────────────────────────────────────────
 
 def build_timer_text() -> str:
     now = time.time()
     lines = ["⚔️ **World Boss Timers**\n"]
     for boss, duration in boss_timers.items():
-        name = boss.upper() if boss == "twt" else boss.capitalize()
-        lines.append(f"--- **{name}** ---")
+        lines.append(f"--- **{boss_label(boss)}** ---")
         state = boss_state.get(boss)
         if state and state.get("tod"):
             tod = state["tod"]
@@ -139,10 +114,7 @@ def build_timer_text() -> str:
             lines.append(f"Last known ToD: <t:{int(tod)}:f>")
             killed_by = state.get("killed_by", "Unknown")
             note = state.get("note")
-            if note:
-                lines.append(f"Last: **{killed_by}** | 💬 {note}")
-            else:
-                lines.append(f"Last: **{killed_by}**")
+            lines.append(f"Last: **{killed_by}**" + (f" | 💬 {note}" if note else ""))
         else:
             lines.append("🟢 **READY!**")
             lines.append("Last known ToD: N/A")
@@ -154,58 +126,25 @@ def build_view() -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     for boss in boss_timers:
         view.add_item(discord.ui.Button(
-            label=f"Kill: {boss.upper() if boss == 'twt' else boss.capitalize()}",
+            label=f"Kill: {boss_label(boss)}",
             custom_id=f"kill_{boss}",
             style=discord.ButtonStyle.primary,
         ))
-    view.add_item(discord.ui.Button(
-        label="Maintenance",
-        custom_id="maintenance",
-        style=discord.ButtonStyle.danger,
-    ))
-    view.add_item(discord.ui.Button(
-        label="Undo",
-        custom_id="undo",
-        style=discord.ButtonStyle.secondary,
-    ))
+    view.add_item(discord.ui.Button(label="Maintenance", custom_id="maintenance", style=discord.ButtonStyle.danger))
+    view.add_item(discord.ui.Button(label="Undo", custom_id="undo", style=discord.ButtonStyle.secondary))
     return view
 
 async def update_timer_message():
     if timer_message:
         await timer_message.edit(content=build_timer_text(), view=build_view())
 
-# ── Egg boss message ─────────────────────────────────────────────────────────
+# ── Secondary channel message ─────────────────────────────────────────────────
 
 def build_egg_text() -> str:
-    lines = ["🥚 **Egg Boss Timers**\n"]
-    for boss, cfg in EGG_BOSS_CONFIG.items():
-        icon = cfg["icon"]
-        grow_secs = cfg["grow"]
-        lines.append(f"--- {icon} **{boss.title()}** ---")
-        state = egg_state.get(boss)
-        if state and state.get("summon_time"):
-            status, cooldown_end, grow_end, window_end = get_egg_status(state["summon_time"], grow_secs)
-            if status == "cooldown":
-                lines.append(f"⏳ **Cooldown** — grows <t:{cooldown_end}:R> (<t:{cooldown_end}:t>)")
-            elif status == "growing":
-                lines.append(f"🥚 Growing — ready <t:{grow_end}:R> (<t:{grow_end}:t>)")
-            else:
-                lines.append(f"🟢 **READY** — window closes <t:{window_end}:R> (<t:{window_end}:t>)")
-            lines.append(f"Last pop: <t:{int(state['summon_time'])}:f>")
-            popped_by = state.get("popped_by", "Unknown")
-            note = state.get("note")
-            if note:
-                lines.append(f"Last: **{popped_by}** | 💬 {note}")
-            else:
-                lines.append(f"Last: **{popped_by}**")
-        else:
-            lines.append("🟢 **READY** — no pop recorded yet")
-            lines.append("Last pop: N/A")
-            lines.append("Last: N/A")
-        lines.append("")
     now = time.time()
+    lines = ["⚔️ **Boss Timers**\n"]
     for boss, duration in EGG_SIMPLE_TIMERS.items():
-        lines.append(f"--- **{boss.upper()}** ---")
+        lines.append(f"--- **{boss_label(boss)}** ---")
         state = egg_state.get(f"simple_{boss}")
         if state and state.get("kill_time"):
             spawn_time = int(state["kill_time"] + duration)
@@ -216,10 +155,7 @@ def build_egg_text() -> str:
             lines.append(f"Last known ToD: <t:{int(state['kill_time'])}:f>")
             killed_by = state.get("killed_by", "Unknown")
             note = state.get("note")
-            if note:
-                lines.append(f"Last: **{killed_by}** | 💬 {note}")
-            else:
-                lines.append(f"Last: **{killed_by}**")
+            lines.append(f"Last: **{killed_by}**" + (f" | 💬 {note}" if note else ""))
         else:
             lines.append("🟢 **READY!**")
             lines.append("Last known ToD: N/A")
@@ -229,40 +165,24 @@ def build_egg_text() -> str:
 
 def build_egg_view() -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for boss in EGG_BOSSES:
-        view.add_item(discord.ui.Button(
-            label=f"Summoned: {boss.title()}",
-            custom_id=f"eggkill_{boss}",
-            style=discord.ButtonStyle.primary,
-        ))
     for boss in EGG_SIMPLE_TIMERS:
         verb = EGG_SIMPLE_BUTTON_LABELS.get(boss, "Summoned")
-        label = f"{verb}: {boss.upper() if boss == 'twt' else boss.capitalize()}"
         view.add_item(discord.ui.Button(
-            label=label,
+            label=f"{verb}: {boss_label(boss)}",
             custom_id=f"eggsimple_{boss}",
             style=discord.ButtonStyle.primary,
         ))
-    view.add_item(discord.ui.Button(
-        label="Undo",
-        custom_id="egg_undo",
-        style=discord.ButtonStyle.secondary,
-    ))
+    view.add_item(discord.ui.Button(label="Undo", custom_id="egg_undo", style=discord.ButtonStyle.secondary))
     return view
 
 async def update_egg_message():
     if egg_message:
         await egg_message.edit(content=build_egg_text(), view=build_egg_view())
 
-# ── Modals ───────────────────────────────────────────────────────────────────
+# ── Modals ────────────────────────────────────────────────────────────────────
 
 class NoteModal(discord.ui.Modal, title="Boss Kill Report"):
-    note = discord.ui.TextInput(
-        label="Note (optional)",
-        placeholder="e.g. pug raid, didn't see death...",
-        required=False,
-        max_length=100,
-    )
+    note = discord.ui.TextInput(label="Note (optional)", placeholder="e.g. pug raid, didn't see death...", required=False, max_length=100)
 
     def __init__(self, boss: str):
         super().__init__()
@@ -270,11 +190,7 @@ class NoteModal(discord.ui.Modal, title="Boss Kill Report"):
 
     async def on_submit(self, interaction: discord.Interaction):
         current = boss_state.get(self.boss)
-        entry = {
-            "tod": time.time(),
-            "killed_by": interaction.user.display_name,
-            "maintenance": False,
-        }
+        entry = {"tod": time.time(), "killed_by": interaction.user.display_name, "maintenance": False}
         if current:
             entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
         if self.note.value:
@@ -286,12 +202,7 @@ class NoteModal(discord.ui.Modal, title="Boss Kill Report"):
 
 
 class SimpleKillModal(discord.ui.Modal, title="Boss Kill Report"):
-    note = discord.ui.TextInput(
-        label="Note (optional)",
-        placeholder="e.g. guild run...",
-        required=False,
-        max_length=100,
-    )
+    note = discord.ui.TextInput(label="Note (optional)", placeholder="e.g. guild run...", required=False, max_length=100)
 
     def __init__(self, key: str):
         super().__init__()
@@ -299,10 +210,7 @@ class SimpleKillModal(discord.ui.Modal, title="Boss Kill Report"):
 
     async def on_submit(self, interaction: discord.Interaction):
         current = egg_state.get(self.key)
-        entry = {
-            "kill_time": time.time(),
-            "killed_by": interaction.user.display_name,
-        }
+        entry = {"kill_time": time.time(), "killed_by": interaction.user.display_name}
         if current:
             entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
         if self.note.value:
@@ -313,41 +221,8 @@ class SimpleKillModal(discord.ui.Modal, title="Boss Kill Report"):
         await update_egg_message()
 
 
-class EggKillModal(discord.ui.Modal, title="Egg Pop Report"):
-    note = discord.ui.TextInput(
-        label="Note (optional)",
-        placeholder="e.g. solo, guild run...",
-        required=False,
-        max_length=100,
-    )
-
-    def __init__(self, boss: str):
-        super().__init__()
-        self.boss = boss
-
-    async def on_submit(self, interaction: discord.Interaction):
-        current = egg_state.get(self.boss)
-        entry = {
-            "summon_time": time.time(),
-            "popped_by": interaction.user.display_name,
-        }
-        if current:
-            entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
-        if self.note.value:
-            entry["note"] = self.note.value
-        egg_state[self.boss] = entry
-        save_egg_state(egg_state)
-        await interaction.response.send_message("✅ Pop recorded — 2h cooldown started!", ephemeral=True)
-        await update_egg_message()
-
-
 class MaintenanceConfirm(discord.ui.Modal, title="Confirm Maintenance"):
-    confirm = discord.ui.TextInput(
-        label='Type "confirm" to reset all bosses',
-        placeholder="confirm",
-        required=True,
-        max_length=10,
-    )
+    confirm = discord.ui.TextInput(label='Type "confirm" to reset all bosses', placeholder="confirm", required=True, max_length=10)
 
     async def on_submit(self, interaction: discord.Interaction):
         if self.confirm.value.strip().lower() != "confirm":
@@ -369,19 +244,12 @@ class MaintenanceConfirm(discord.ui.Modal, title="Confirm Maintenance"):
 # ── Undo handlers ─────────────────────────────────────────────────────────────
 
 async def handle_undo(interaction: discord.Interaction):
-    options = [
-        discord.SelectOption(label=boss.capitalize(), value=boss)
-        for boss, state in boss_state.items() if state.get("previous")
-    ]
+    options = [discord.SelectOption(label=boss.capitalize(), value=boss) for boss, state in boss_state.items() if state.get("previous")]
     if not options:
         await interaction.response.send_message("❌ Nothing to undo.", ephemeral=True)
         return
     view = discord.ui.View(timeout=60)
-    view.add_item(discord.ui.Select(
-        placeholder="Select a boss to undo...",
-        options=options,
-        custom_id="undo_select",
-    ))
+    view.add_item(discord.ui.Select(placeholder="Select a boss to undo...", options=options, custom_id="undo_select"))
     await interaction.response.send_message("Select which boss to revert:", view=view, ephemeral=True)
 
 async def handle_undo_select(interaction: discord.Interaction, boss: str):
@@ -396,33 +264,23 @@ async def handle_undo_select(interaction: discord.Interaction, boss: str):
 
 async def handle_egg_undo(interaction: discord.Interaction):
     def display_label(key: str) -> str:
-        if key.startswith("simple_"):
-            return key.removeprefix("simple_").upper()
-        return key.title()
-
-    options = [
-        discord.SelectOption(label=display_label(boss), value=boss)
-        for boss, state in egg_state.items() if state.get("previous")
-    ]
+        return key.removeprefix("simple_").upper() if key.startswith("simple_") else key.title()
+    options = [discord.SelectOption(label=display_label(key), value=key) for key, state in egg_state.items() if state.get("previous")]
     if not options:
         await interaction.response.send_message("❌ Nothing to undo.", ephemeral=True)
         return
     view = discord.ui.View(timeout=60)
-    view.add_item(discord.ui.Select(
-        placeholder="Select a boss to undo...",
-        options=options,
-        custom_id="egg_undo_select",
-    ))
-    await interaction.response.send_message("Select which egg boss to revert:", view=view, ephemeral=True)
+    view.add_item(discord.ui.Select(placeholder="Select a boss to undo...", options=options, custom_id="egg_undo_select"))
+    await interaction.response.send_message("Select which boss to revert:", view=view, ephemeral=True)
 
-async def handle_egg_undo_select(interaction: discord.Interaction, boss: str):
-    state = egg_state.get(boss)
+async def handle_egg_undo_select(interaction: discord.Interaction, key: str):
+    state = egg_state.get(key)
     if not state or not state.get("previous"):
         await interaction.response.send_message("❌ Nothing to undo for that boss.", ephemeral=True)
         return
-    egg_state[boss] = state["previous"]
+    egg_state[key] = state["previous"]
     save_egg_state(egg_state)
-    await interaction.response.send_message(f"↩️ Reverted **{boss.title()}** to previous state.", ephemeral=True)
+    await interaction.response.send_message(f"↩️ Reverted to previous state.", ephemeral=True)
     await update_egg_message()
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -438,7 +296,6 @@ async def refresh_timer():
     except Exception as e:
         print(f"Error updating egg message: {e}")
 
-
 @refresh_timer.before_loop
 async def before_refresh():
     await bot.wait_until_ready()
@@ -450,7 +307,6 @@ async def on_ready():
     global timer_message, egg_message
     await bot.tree.sync()
 
-    # World boss channel
     channel = bot.get_channel(CHANNEL_ID)
     async for msg in channel.history(limit=50):
         if msg.author == bot.user and "World Boss Timers" in msg.content:
@@ -461,14 +317,13 @@ async def on_ready():
     else:
         timer_message = await channel.send(content=build_timer_text(), view=build_view())
 
-    # Egg boss channel
     if EGG_CHANNEL_ID:
         egg_channel = bot.get_channel(EGG_CHANNEL_ID)
         if egg_channel is None:
-            print(f"WARNING: Egg channel {EGG_CHANNEL_ID} not found — check bot has access to the channel.")
+            print(f"WARNING: Secondary channel {EGG_CHANNEL_ID} not found — check bot permissions.")
         else:
             async for msg in egg_channel.history(limit=50):
-                if msg.author == bot.user and "Egg Boss Timers" in msg.content:
+                if msg.author == bot.user and "Boss Timers" in msg.content:
                     egg_message = msg
                     break
             if egg_message:
@@ -504,10 +359,6 @@ async def on_interaction(interaction: discord.Interaction):
         boss = custom_id.removeprefix("eggsimple_")
         if boss in EGG_SIMPLE_TIMERS:
             await interaction.response.send_modal(SimpleKillModal(f"simple_{boss}"))
-    elif custom_id.startswith("eggkill_"):
-        boss = custom_id.removeprefix("eggkill_")
-        if boss in EGG_BOSSES:
-            await interaction.response.send_modal(EggKillModal(boss))
     elif custom_id.startswith("kill_"):
         boss = custom_id.removeprefix("kill_")
         if boss in boss_timers:
@@ -533,27 +384,21 @@ async def addtimer(interaction: discord.Interaction, boss: str, hours: float):
 async def edittimer(interaction: discord.Interaction, boss: str, hours: float):
     key = boss.lower()
     updated = []
-
     if key in boss_timers:
         old = seconds_to_hours(boss_timers[key])
         boss_timers[key] = hours_to_seconds(hours)
         save_timers(boss_timers)
         updated.append(f"World bosses: {old}h → {hours}h")
         await update_timer_message()
-
     if key in EGG_SIMPLE_TIMERS:
         old = seconds_to_hours(EGG_SIMPLE_TIMERS[key])
         EGG_SIMPLE_TIMERS[key] = hours_to_seconds(hours)
-        updated.append(f"Egg channel: {old}h → {hours}h")
+        updated.append(f"Secondary channel: {old}h → {hours}h")
         await update_egg_message()
-
     if not updated:
         await interaction.response.send_message(f"`{key}` not found.", ephemeral=True)
         return
-
-    await interaction.response.send_message(
-        f"Updated **{key.capitalize()}**:\n" + "\n".join(updated), ephemeral=True
-    )
+    await interaction.response.send_message(f"Updated **{key.capitalize()}**:\n" + "\n".join(updated), ephemeral=True)
 
 
 @bot.tree.command(name="removetimer", description="Remove a world boss from the timer list.")
@@ -576,75 +421,41 @@ async def listtimers(interaction: discord.Interaction):
     if not boss_timers:
         await interaction.response.send_message("No bosses configured.", ephemeral=True)
         return
-    lines = [f"**{k.capitalize()}** — {seconds_to_hours(v)}h" for k, v in boss_timers.items()]
+    lines = [f"**{boss_label(k)}** — {seconds_to_hours(v)}h" for k, v in boss_timers.items()]
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
-@bot.tree.command(name="settimer", description="Manually set how long is left on an egg's grow timer.")
-@app_commands.describe(
-    boss="Which egg boss",
-    days="Days remaining",
-    hours="Hours remaining (0–23)",
-    minutes="Minutes remaining (0–59)",
-    seconds="Seconds remaining (0–59)",
-)
+@bot.tree.command(name="settimer", description="Manually set how long is left on a secondary channel boss timer.")
+@app_commands.describe(boss="Which boss", days="Days remaining", hours="Hours remaining", minutes="Minutes remaining", seconds="Seconds remaining")
 @app_commands.choices(boss=[
-    app_commands.Choice(name="Red Dragon", value="red dragon"),
-    app_commands.Choice(name="Kraken",     value="kraken"),
-    app_commands.Choice(name="Berserker",  value="berserker"),
-    app_commands.Choice(name="TWT",        value="twt"),
-    app_commands.Choice(name="Morpheus",   value="morpheus"),
+    app_commands.Choice(name="TWT",      value="twt"),
+    app_commands.Choice(name="Morpheus", value="morpheus"),
+    app_commands.Choice(name="Vyrava",   value="vyrava"),
 ])
-async def settimer(
-    interaction: discord.Interaction,
-    boss: str,
-    days: int = 0,
-    hours: int = 0,
-    minutes: int = 0,
-    seconds: int = 0,
-):
+async def settimer(interaction: discord.Interaction, boss: str, days: int = 0, hours: int = 0, minutes: int = 0, seconds: int = 0):
     total_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds
     if total_seconds <= 0:
         await interaction.response.send_message("❌ Please provide a time greater than zero.", ephemeral=True)
         return
-
+    duration = EGG_SIMPLE_TIMERS[boss]
+    if total_seconds > duration:
+        await interaction.response.send_message(f"❌ Time remaining cannot exceed {seconds_to_hours(duration)}h for {boss_label(boss)}.", ephemeral=True)
+        return
+    key = f"simple_{boss}"
+    kill_time = time.time() - (duration - total_seconds)
+    current = egg_state.get(key)
+    entry = {"kill_time": kill_time, "killed_by": current.get("killed_by", "Unknown") if current else "Unknown"}
+    if current:
+        entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
+    egg_state[key] = entry
+    save_egg_state(egg_state)
     parts = []
     if days:    parts.append(f"{days}d")
     if hours:   parts.append(f"{hours}h")
     if minutes: parts.append(f"{minutes}m")
     if seconds: parts.append(f"{seconds}s")
-    time_str = " ".join(parts)
-
-    if boss in EGG_SIMPLE_TIMERS:
-        duration = EGG_SIMPLE_TIMERS[boss]
-        if total_seconds > duration:
-            await interaction.response.send_message(f"❌ Time remaining cannot exceed {seconds_to_hours(duration)}h for {boss.upper() if boss == 'twt' else boss.capitalize()}.", ephemeral=True)
-            return
-        key = f"simple_{boss}"
-        kill_time = time.time() - (duration - total_seconds)
-        current = egg_state.get(key)
-        entry = {"kill_time": kill_time, "killed_by": current.get("killed_by", "Unknown") if current else "Unknown"}
-        if current:
-            entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
-        egg_state[key] = entry
-        save_egg_state(egg_state)
-        await interaction.response.send_message(f"✅ **{boss.upper() if boss == 'twt' else boss.capitalize()}** timer set — spawns in **{time_str}**.", ephemeral=True)
-        await update_egg_message()
-    else:
-        grow_secs = EGG_BOSS_CONFIG[boss]["grow"]
-        if total_seconds > grow_secs:
-            max_h = grow_secs // 3600
-            await interaction.response.send_message(f"❌ Time remaining cannot exceed {max_h}h for {boss.title()}.", ephemeral=True)
-            return
-        summon_time = time.time() - (EGG_COOLDOWN_SECS + grow_secs - total_seconds)
-        current = egg_state.get(boss)
-        entry = {"summon_time": summon_time, "popped_by": current.get("popped_by", "Unknown") if current else "Unknown"}
-        if current:
-            entry["previous"] = {k: v for k, v in current.items() if k != "previous"}
-        egg_state[boss] = entry
-        save_egg_state(egg_state)
-        await interaction.response.send_message(f"✅ **{boss.title()}** egg timer set — ready in **{time_str}**.", ephemeral=True)
-        await update_egg_message()
+    await interaction.response.send_message(f"✅ **{boss_label(boss)}** timer set — spawns in **{' '.join(parts)}**.", ephemeral=True)
+    await update_egg_message()
 
 
 bot.run(TOKEN)
