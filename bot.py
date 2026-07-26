@@ -14,9 +14,10 @@ EGG_CHANNEL_ID_RAW = os.getenv("EGG_CHANNEL_ID")
 EGG_CHANNEL_ID = int(EGG_CHANNEL_ID_RAW) if EGG_CHANNEL_ID_RAW else None
 
 DATA_DIR = os.getenv("DATA_DIR", ".")
-TIMERS_FILE    = os.path.join(DATA_DIR, "boss_timers.json")
-STATE_FILE     = os.path.join(DATA_DIR, "boss_state.json")
-EGG_STATE_FILE = os.path.join(DATA_DIR, "egg_state.json")
+TIMERS_FILE      = os.path.join(DATA_DIR, "boss_timers.json")
+STATE_FILE       = os.path.join(DATA_DIR, "boss_state.json")
+EGG_STATE_FILE   = os.path.join(DATA_DIR, "egg_state.json")
+MSG_IDS_FILE     = os.path.join(DATA_DIR, "message_ids.json")
 
 # ── World boss config ────────────────────────────────────────────────────────
 
@@ -74,16 +75,29 @@ def save_egg_state(state: dict):
     with open(EGG_STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
 
+def load_msg_ids() -> dict:
+    if os.path.exists(MSG_IDS_FILE):
+        with open(MSG_IDS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_msg_ids(ids: dict):
+    with open(MSG_IDS_FILE, "w") as f:
+        json.dump(ids, f, indent=2)
+
 boss_timers = load_timers()
 boss_state  = load_state()
 egg_state   = load_egg_state()
+msg_ids     = load_msg_ids()
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-timer_message: discord.Message | None = None
-egg_message:   discord.Message | None = None
+# Per-boss messages + one button message
+boss_messages: dict[str, discord.Message] = {}
+button_message: discord.Message | None = None
+egg_message:    discord.Message | None = None
 
 # ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -96,33 +110,31 @@ def seconds_to_hours(seconds: int) -> float:
 def boss_label(boss: str) -> str:
     return boss.upper() if boss == "twt" else boss.capitalize()
 
-# ── World boss message ────────────────────────────────────────────────────────
+# ── World boss messages ───────────────────────────────────────────────────────
 
-def build_timer_text() -> str:
+def build_boss_text(boss: str) -> str:
+    duration = boss_timers.get(boss, 0)
     now = time.time()
-    lines = ["⚔️ **World Boss Timers**\n"]
-    for boss, duration in boss_timers.items():
-        lines.append(f"--- **{boss_label(boss)}** ---")
-        state = boss_state.get(boss)
-        if state and state.get("tod"):
-            tod = state["tod"]
-            spawn_time = int(tod + duration)
-            if state.get("maintenance") or now >= spawn_time:
-                lines.append("🟢 **READY!**")
-            else:
-                lines.append(f"🔴 spawns <t:{spawn_time}:R> (<t:{spawn_time}:t>)")
-            lines.append(f"Last known ToD: <t:{int(tod)}:f>")
-            killed_by = state.get("killed_by", "Unknown")
-            note = state.get("note")
-            lines.append(f"Last: **{killed_by}**" + (f" | 💬 {note}" if note else ""))
-        else:
+    lines = [f"--- **{boss_label(boss)}** ---"]
+    state = boss_state.get(boss)
+    if state and state.get("tod"):
+        tod = state["tod"]
+        spawn_time = int(tod + duration)
+        if state.get("maintenance") or now >= spawn_time:
             lines.append("🟢 **READY!**")
-            lines.append("Last known ToD: N/A")
-            lines.append("Last: N/A")
-        lines.append("")
+        else:
+            lines.append(f"🔴 spawns <t:{spawn_time}:R> (<t:{spawn_time}:t>)")
+        lines.append(f"Last known ToD: <t:{int(tod)}:f>")
+        killed_by = state.get("killed_by", "Unknown")
+        note = state.get("note")
+        lines.append(f"Last: **{killed_by}**" + (f" | 💬 {note}" if note else ""))
+    else:
+        lines.append("🟢 **READY!**")
+        lines.append("Last known ToD: N/A")
+        lines.append("Last: N/A")
     return "\n".join(lines)
 
-def build_view() -> discord.ui.View:
+def build_button_view() -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     for boss in boss_timers:
         view.add_item(discord.ui.Button(
@@ -134,9 +146,49 @@ def build_view() -> discord.ui.View:
     view.add_item(discord.ui.Button(label="Undo", custom_id="undo", style=discord.ButtonStyle.secondary))
     return view
 
-async def update_timer_message():
-    if timer_message:
-        await timer_message.edit(content=build_timer_text(), view=build_view())
+async def update_boss_message(boss: str):
+    msg = boss_messages.get(boss)
+    if msg:
+        await msg.edit(content=build_boss_text(boss))
+
+async def update_all_boss_messages():
+    for boss in boss_timers:
+        try:
+            await update_boss_message(boss)
+        except Exception as e:
+            print(f"Error updating {boss} message: {e}")
+
+async def setup_world_boss_channel(channel: discord.TextChannel):
+    global button_message
+    # Try to fetch existing messages by saved IDs
+    for boss in boss_timers:
+        mid = msg_ids.get(f"boss_{boss}")
+        if mid:
+            try:
+                boss_messages[boss] = await channel.fetch_message(mid)
+                await boss_messages[boss].edit(content=build_boss_text(boss))
+                continue
+            except discord.NotFound:
+                pass
+        # Send new message for this boss
+        msg = await channel.send(content=build_boss_text(boss))
+        boss_messages[boss] = msg
+        msg_ids[f"boss_{boss}"] = msg.id
+
+    # Button message
+    mid = msg_ids.get("buttons")
+    if mid:
+        try:
+            button_message = await channel.fetch_message(mid)
+            await button_message.edit(content="⚔️ **World Boss Controls**", view=build_button_view())
+        except discord.NotFound:
+            button_message = None
+
+    if button_message is None:
+        button_message = await channel.send(content="⚔️ **World Boss Controls**", view=build_button_view())
+        msg_ids["buttons"] = button_message.id
+
+    save_msg_ids(msg_ids)
 
 # ── Secondary channel message ─────────────────────────────────────────────────
 
@@ -198,7 +250,7 @@ class NoteModal(discord.ui.Modal, title="Boss Kill Report"):
         boss_state[self.boss] = entry
         save_state(boss_state)
         await interaction.response.send_message("✅ Updated!", ephemeral=True)
-        await update_timer_message()
+        await update_boss_message(self.boss)
 
 
 class SimpleKillModal(discord.ui.Modal, title="Boss Kill Report"):
@@ -239,12 +291,12 @@ class MaintenanceConfirm(discord.ui.Modal, title="Confirm Maintenance"):
             boss_state[boss] = entry
         save_state(boss_state)
         await interaction.response.send_message("✅ Maintenance — all bosses set to READY!", ephemeral=True)
-        await update_timer_message()
+        await update_all_boss_messages()
 
 # ── Undo handlers ─────────────────────────────────────────────────────────────
 
 async def handle_undo(interaction: discord.Interaction):
-    options = [discord.SelectOption(label=boss.capitalize(), value=boss) for boss, state in boss_state.items() if state.get("previous")]
+    options = [discord.SelectOption(label=boss_label(boss), value=boss) for boss, state in boss_state.items() if state.get("previous")]
     if not options:
         await interaction.response.send_message("❌ Nothing to undo.", ephemeral=True)
         return
@@ -259,12 +311,12 @@ async def handle_undo_select(interaction: discord.Interaction, boss: str):
         return
     boss_state[boss] = state["previous"]
     save_state(boss_state)
-    await interaction.response.send_message(f"↩️ Reverted **{boss.capitalize()}** to previous state.", ephemeral=True)
-    await update_timer_message()
+    await interaction.response.send_message(f"↩️ Reverted **{boss_label(boss)}** to previous state.", ephemeral=True)
+    await update_boss_message(boss)
 
 async def handle_egg_undo(interaction: discord.Interaction):
     def display_label(key: str) -> str:
-        return key.removeprefix("simple_").upper() if key.startswith("simple_") else key.title()
+        return boss_label(key.removeprefix("simple_")) if key.startswith("simple_") else key.title()
     options = [discord.SelectOption(label=display_label(key), value=key) for key, state in egg_state.items() if state.get("previous")]
     if not options:
         await interaction.response.send_message("❌ Nothing to undo.", ephemeral=True)
@@ -280,17 +332,14 @@ async def handle_egg_undo_select(interaction: discord.Interaction, key: str):
         return
     egg_state[key] = state["previous"]
     save_egg_state(egg_state)
-    await interaction.response.send_message(f"↩️ Reverted to previous state.", ephemeral=True)
+    await interaction.response.send_message("↩️ Reverted to previous state.", ephemeral=True)
     await update_egg_message()
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
 
 @tasks.loop(seconds=30)
 async def refresh_timer():
-    try:
-        await update_timer_message()
-    except Exception as e:
-        print(f"Error updating timer message: {e}")
+    await update_all_boss_messages()
     try:
         await update_egg_message()
     except Exception as e:
@@ -304,18 +353,11 @@ async def before_refresh():
 
 @bot.event
 async def on_ready():
-    global timer_message, egg_message
+    global egg_message
     await bot.tree.sync()
 
     channel = bot.get_channel(CHANNEL_ID)
-    async for msg in channel.history(limit=50):
-        if msg.author == bot.user and "World Boss Timers" in msg.content:
-            timer_message = msg
-            break
-    if timer_message:
-        await timer_message.edit(content=build_timer_text(), view=build_view())
-    else:
-        timer_message = await channel.send(content=build_timer_text(), view=build_view())
+    await setup_world_boss_channel(channel)
 
     if EGG_CHANNEL_ID:
         egg_channel = bot.get_channel(EGG_CHANNEL_ID)
@@ -375,8 +417,14 @@ async def addtimer(interaction: discord.Interaction, boss: str, hours: float):
         return
     boss_timers[key] = hours_to_seconds(hours)
     save_timers(boss_timers)
-    await interaction.response.send_message(f"Added **{key.capitalize()}** with a {hours}h respawn timer.", ephemeral=True)
-    await update_timer_message()
+    await interaction.response.send_message(f"Added **{boss_label(key)}** with a {hours}h respawn timer.", ephemeral=True)
+    channel = bot.get_channel(CHANNEL_ID)
+    msg = await channel.send(content=build_boss_text(key))
+    boss_messages[key] = msg
+    msg_ids[f"boss_{key}"] = msg.id
+    save_msg_ids(msg_ids)
+    if button_message:
+        await button_message.edit(content="⚔️ **World Boss Controls**", view=build_button_view())
 
 
 @bot.tree.command(name="edittimer", description="Edit the respawn timer for an existing boss.")
@@ -389,7 +437,7 @@ async def edittimer(interaction: discord.Interaction, boss: str, hours: float):
         boss_timers[key] = hours_to_seconds(hours)
         save_timers(boss_timers)
         updated.append(f"World bosses: {old}h → {hours}h")
-        await update_timer_message()
+        await update_boss_message(key)
     if key in EGG_SIMPLE_TIMERS:
         old = seconds_to_hours(EGG_SIMPLE_TIMERS[key])
         EGG_SIMPLE_TIMERS[key] = hours_to_seconds(hours)
@@ -398,7 +446,7 @@ async def edittimer(interaction: discord.Interaction, boss: str, hours: float):
     if not updated:
         await interaction.response.send_message(f"`{key}` not found.", ephemeral=True)
         return
-    await interaction.response.send_message(f"Updated **{key.capitalize()}**:\n" + "\n".join(updated), ephemeral=True)
+    await interaction.response.send_message(f"Updated **{boss_label(key)}**:\n" + "\n".join(updated), ephemeral=True)
 
 
 @bot.tree.command(name="removetimer", description="Remove a world boss from the timer list.")
@@ -412,8 +460,14 @@ async def removetimer(interaction: discord.Interaction, boss: str):
     save_timers(boss_timers)
     boss_state.pop(key, None)
     save_state(boss_state)
-    await interaction.response.send_message(f"Removed **{key.capitalize()}** from the timer list.", ephemeral=True)
-    await update_timer_message()
+    msg = boss_messages.pop(key, None)
+    if msg:
+        await msg.delete()
+    msg_ids.pop(f"boss_{key}", None)
+    save_msg_ids(msg_ids)
+    if button_message:
+        await button_message.edit(content="⚔️ **World Boss Controls**", view=build_button_view())
+    await interaction.response.send_message(f"Removed **{boss_label(key)}** from the timer list.", ephemeral=True)
 
 
 @bot.tree.command(name="listtimers", description="List all world bosses and their respawn timers.")
